@@ -1,0 +1,251 @@
+function [edges_x,S2] = test_pusherv2(B0, Nproton, half_angle, )
+
+%% PIC PUSHER
+dircur =pwd;
+
+% B0 =10e6*1e-4; %T
+
+%% load Bmap
+% uiopen(dircur);
+open(
+% mapx=B0*mapx;
+% mapy=B0*mapy;
+% mapz=B0*mapz;
+
+res_map=scale;
+for i=1:size(z0_map,2)
+    dmapx(:,:,i)=full(B0*mapx{i});
+    dmapy(:,:,i)=full(B0*mapy{i});
+    dmapz(:,:,i)=full(B0*mapz{i});
+end
+clear mapx mapy mapz
+mapx = dmapx;
+mapy = dmapy;
+mapz = dmapz;
+clear dmapx dmapy dmapz
+
+%% Define the proton source
+
+%% Generate values from a normal distribution with mean 0 and standard deviation std_source.
+
+%% Energy
+% Nproton = 1e7; % number of protons %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Energy = 1; % MeV                  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+w_energy = 0.0001; % MeV           %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Ep = Energy+ w_energy.*randn(Nproton,1);
+Ep(Ep<1) = [];
+Nproton = size(Ep,1);
+
+e = 1.602*10^-19;                % Elementary charge (C)
+c = 2.998*10^8;                  % Speed of light (m/s)
+Mp = 1.673*10^-27;               % mass of proton (kg) 
+g = 1+Ep*1e6*e/(Mp*c^2);
+vp = c*sqrt(1-1./g.^2);
+%vp = sqrt(2*Ep*1e6*e/Mp);
+
+%% position  around the VSP
+for psource= 600 %[10, 20, 30, 60]
+Pxyz0_source = [0;0;-psource]; % Position of the proton source (µm) %%%%%%
+Vxyz0_source = [0;0;1]; % direction of the proton beam %%%%%%%%%%%%%%%%%%%
+%% randomization
+std_source= 0; % µm %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% half_angle =  8; % degree %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% position
+dPxyz = [0 + std_source.*randn(Nproton,2),zeros(Nproton,1)]';
+
+% angle
+theta = rand(Nproton,1)*2*pi;
+fi = acos(2*rand(Nproton,1)-1)*half_angle/90;
+x = sqrt(1-cos(fi).^2).*cos(theta);
+y = sqrt(1-cos(fi).^2).*sin(theta);
+z = cos(fi);
+
+dVxyz = [vp.*sqrt(1-cos(fi).^2).*cos(theta),vp.*sqrt(1-cos(fi).^2).*sin(theta),vp.*cos(fi)]';
+dVxyz(3,:) = abs(dVxyz(3,:)); % remove vector going in the wrong direction due to randomness
+
+%% rotation to match the proton beam axis, Vxyz0_source
+u0 = Vxyz0_source;
+u0_n = u0./norm(u0,2);
+u_rot = [-u0_n(2);u0_n(1);0];
+
+if (norm(u_rot,2) ~=0)
+    u_rot_n =u_rot./norm(u_rot,2);
+    theta = acos(u0_n(3));
+    c = cos(theta);
+    s = sin(theta);
+
+    Ru = [u_rot_n(1)^2*(1-c)+c, u_rot_n(1)*u_rot_n(2)*(1-c)-u_rot_n(3)*s, u_rot_n(1)*u_rot_n(3)*(1-c)+u_rot_n(2)*s; ...
+         u_rot_n(1)*u_rot_n(2)*(1-c)+u_rot_n(3)*s, u_rot_n(2)^2*(1-c)+c, u_rot_n(2)*u_rot_n(3)*(1-c)-u_rot_n(1)*s; ...
+         u_rot_n(1)*u_rot_n(3)*(1-c)-u_rot_n(2)*s, u_rot_n(2)*u_rot_n(3)*(1-c)+u_rot_n(1)*s, u_rot_n(3)^2*(1-c)+c;];
+
+    %% rotation
+    Vxyz_source = Ru*dVxyz;
+    XYZ_source = bsxfun(@plus,Pxyz0_source,Ru*dPxyz);
+elseif(Vxyz0_source(3)<0)
+    XYZ_source = bsxfun(@plus,Pxyz0_source,dPxyz);
+    Vxyz_source = dVxyz;
+    Vxyz_source(3,:) = -dVxyz(3,:);
+else
+    XYZ_source = bsxfun(@plus,Pxyz0_source,dPxyz);
+    Vxyz_source = dVxyz;
+end
+
+%figure; plot3(XYZ_source(1,:),XYZ_source(2,:),XYZ_source(3,:),'b.',Vxyz_source(1,:),Vxyz_source(2,:),Vxyz_source(3,:),'r.')
+% %% load Bmap
+% uiopen(dircur);
+% mapx=B0*mapx;
+% mapy=B0*mapy;
+% mapz=B0*mapz;
+
+
+% load 'mapx','mapy','mapz','x0_map','y0_map','z0_map','res_map'
+box_edges = [x0_map(1),x0_map(end);y0_map(1),y0_map(end);z0_map(1),z0_map(end)];
+tp = 10e-6/vp(1);
+%figure; plot3(XYZ_source(1,:),XYZ_source(2,:),XYZ_source(3,:),'b.',Vxyz_source(1,:)*tp,Vxyz_source(2,:)*tp,Vxyz_source(3,:)*tp,'r.')
+
+%% test if particle already in the box
+K1 = find(XYZ_source(1,:)>=box_edges(1,1) & XYZ_source(1,:)<=box_edges(1,end));
+K2 = find(XYZ_source(2,:)>=box_edges(2,1) & XYZ_source(2,:)<=box_edges(2,end));
+K3 = find(XYZ_source(3,:)>=box_edges(3,1) & XYZ_source(3,:)<=box_edges(3,end));
+K =  intersect(intersect(K1,K2),K3);
+if (~isempty(K))
+    XYZ_in = XYZ_source(:,K);
+    Vxyz_in = Vxyz_source(:,K);
+    XYZ_source(:,K) = [];
+    Vxyz_source(:,K)= [];
+else
+    XYZ_in = [];
+    Vxyz_in = [];
+end
+
+XYZ_entrance = [];
+Vxyz_entrance = [];
+XYZ_pusher = [];
+Vxyz_pusher = [];
+
+
+if (~isempty(XYZ_source))
+    %% Propagation in vacuum until B_field box
+    XYZ_entrance = nan(size(XYZ_source));
+    Vxyz_entrance = nan(size(Vxyz_source));
+
+    for i = 1:3 % each pair of face
+        n = zeros(3,1); n(i) = 1; % define normal to face
+        j = setdiff(1:3,i);
+        ps = dot(repmat(n,1,size(Vxyz_source,2)),Vxyz_source);
+        % one face
+        I1   = find (ps > 0);
+
+        d = nan(size(ps));
+        d(I1) = dot( bsxfun(@minus,repmat(box_edges(:,1),1,size(I1,2)),XYZ_source(:,I1)),repmat(n,1,size(I1,2)))./ps(I1);
+        P = real(XYZ_source+ bsxfun(@times,Vxyz_source,d));
+
+        J1 = find (P(j(1),:)>box_edges(j(1),1) & P(j(1),:)<box_edges(j(1),2));
+        J2 = find (P(j(2),:)>box_edges(j(2),1) & P(j(2),:)<box_edges(j(2),2));
+
+        XYZ_entrance(:,intersect(J1,J2)) = P(:,intersect(J1,J2));
+        Vxyz_entrance(:,intersect(J1,J2)) = Vxyz_source(:,intersect(J1,J2));
+        disp(['i =',num2str(i),'_face+_nb:',num2str(size(intersect(J1,J2),2))]);
+        clear P J1 J2
+
+        % its opposite
+        Iend = find (ps < 0);
+        d = nan(size(ps));
+        d(Iend) = dot( bsxfun(@minus,repmat(box_edges(:,2),1,size(Iend,2)),XYZ_source(:,Iend)),repmat(n,1,size(Iend,2)))./ps(Iend);
+        P = XYZ_source+ bsxfun(@times,Vxyz_source,d);
+
+        J1 = find (P(j(1),:)>box_edges(j(1),1) & P(j(1),:)<box_edges(j(1),2));
+        J2 = find (P(j(2),:)>box_edges(j(2),1) & P(j(2),:)<box_edges(j(2),2));
+
+        XYZ_entrance(:,intersect(J1,J2)) = P(:,intersect(J1,J2));
+        Vxyz_entrance(:,intersect(J1,J2)) = Vxyz_source(:,intersect(J1,J2));
+        disp(['i =',num2str(i),'_face-_nb:',num2str(size(intersect(J1,J2),2))]);
+        clear P J1 J2 Iend
+    end
+    I = isnan(XYZ_entrance(1,:));
+    XYZ_entrance(:,I)= [];
+    Vxyz_entrance(:,I)= [];
+    %% Add particle that are not deflected 
+    XYZ_pusher = [XYZ_pusher,XYZ_source(:,I)];
+    Vxyz_pusher = [Vxyz_pusher,Vxyz_source(:,I)];
+end
+
+%% Add the ones in
+XYZ_entrance= [XYZ_entrance,XYZ_in];
+Vxyz_entrance= [Vxyz_entrance,Vxyz_in];
+
+
+figure; plot3(XYZ_entrance(1,:),XYZ_entrance(2,:),XYZ_entrance(3,:),'r.');
+%uisave({'XYZ_entrance','Vxyz_entrance'},[dircur,'/P_entrance_test.mat']);
+
+%% from XYZ_entrance, Vxyz_entrance compute XYZ_exit, Vxyz_exit using Bfield
+particle_pusherv2
+
+
+%% update XYZ pusher and Vxyz_pusher
+
+XYZ_pusher = [XYZ_pusher,XYZ_exit];
+Vxyz_pusher =[Vxyz_pusher,Vxyz_exit];
+
+%stop
+
+%% Propagation in vacuum until RCF
+Pxyz_rcf = [0;0;55]*1e3; % position of the RCF %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+n = [0;0;1];% normal to the RCF plan in the direction of the proton (sign) %%%%
+lim = Pxyz_rcf(3)*tand(half_angle); % µm
+scale  =100; % scale on the RCF
+
+
+I = find(dot(repmat(n,1,size(XYZ_pusher,2)),Vxyz_pusher)<0);
+XYZ_pusher(:,I) =[];
+Vxyz_pusher(:,I) = [];
+
+d = abs(dot(repmat(n,1,size(XYZ_pusher,2)),bsxfun(@minus,Pxyz_rcf,XYZ_pusher)));
+u_d = abs(dot(repmat(n,1,size(XYZ_pusher,2)),Vxyz_pusher));
+t = bsxfun(@rdivide,d,u_d);
+
+XYZ_final = XYZ_pusher + bsxfun(@times,Vxyz_pusher,t);
+
+%% Sum the RCF plan
+% define new plan u,v
+
+X = bsxfun(@minus,XYZ_final,Pxyz_rcf);
+u = X(:,1)/norm(X(:,1),2);
+v = cross(u,n)/norm(cross(u,n),2);
+
+x_f = reshape(dot(repmat(u,1,size(X,2)),X),[],1);
+y_f = reshape(dot(repmat(v,1,size(X,2)),X),[],1);
+XY = [x_f,y_f];
+   
+
+mn = [-lim -lim]; mx = [lim lim]; 
+% N = 2*round(lim/scale);
+% edges = linspace(mn(1), mx(1), N+1);
+% 
+% [~,subs] = histc(XY, edges,1); 
+% subs(subs==N+1) = N;
+% subs(subs==0) = 1;
+% 
+% H = accumarray(subs, 1, [N N]);
+% imagesc(edges/1e4,edges/1e4,log10(H)); % cm
+% axis equal; 
+% colormap(flipud(colormap('gray')));
+% axis([-lim,lim,-lim,lim]/1e4);
+end
+
+reject = find(x_f<mn(1) | x_f>mx(1) | y_f<mn(2) | y_f>mx(2));
+dumx = x_f; dumx(reject) = [];
+dumy = y_f; dumy(reject) = [];
+X_sparse = round((dumx-mn(1))/scale)+1;
+Y_sparse = round((dumy-mn(2))/scale)+1;
+v=ones(size(dumy));
+
+edges_x =mn(1):scale:mx(1)+scale-1e-10;
+edges_y =mn(2):scale:mx(2)+scale-1e-10;
+S=sparse(X_sparse,Y_sparse,v);
+S2 = medfilt2(full(S));
+edges_x = edges_x/1e4;
+edges_y = edges_y/1e4;
+% figure;imagesc(edges_x/1e4,edges_x/1e4,S2); colormap(flipud(colormap('gray')));
+end
