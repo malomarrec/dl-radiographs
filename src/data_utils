@@ -1,0 +1,4 @@
+import argparse
+
+# Instantiate the parser
+parser = argparse.ArgumentParser(description='Get data cleaning arguments')

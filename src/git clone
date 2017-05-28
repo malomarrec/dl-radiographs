@@ -1,0 +1,6 @@
+git clone
+
+#Here install lfs if not installed, then
+
+git lfs track "*.png"
+git add .gitattributes
