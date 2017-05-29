@@ -2,6 +2,8 @@ import argparse
 import json
 import numpy as np
 import time
+import os
+
 from os import listdir
 from scipy import ndimage
 import tensorflow as tf
@@ -9,12 +11,105 @@ import tensorflow as tf
 import math
 import matplotlib.pyplot as plt
 
+from tensorport import TensorportClient as tport
 
-data_path = "../data/labels.json"
 
-print("data path: ",data_path)
-# print(out_path)
+PATH_TO_LOCAL_LOGS = os.path.expanduser('~/logs/mnist')
+ROOT_PATH_TO_LOCAL_DATA = os.path.expanduser('~/data')
 
+try:
+    job_name = os.environ['JOB_NAME']
+    task_index = os.environ['TASK_INDEX']
+    ps_hosts = os.environ['PS_HOSTS']
+    worker_hosts = os.environ['WORKER_HOSTS']
+except:
+    job_name = None
+    task_index = 0
+    ps_hosts = None
+    worker_hosts = None
+
+flags = tf.app.flags
+
+# Flags for configuring the distributed task
+flags.DEFINE_string("job_name", job_name,
+                    "job name: worker or ps")
+flags.DEFINE_integer("task_index", task_index,
+                     "Worker task index, should be >= 0. task_index=0 is "
+                     "the chief worker task the performs the variable "
+                     "initialization")
+flags.DEFINE_string("ps_hosts", ps_hosts,
+                    "Comma-separated list of hostname:port pairs")
+flags.DEFINE_string("worker_hosts", worker_hosts,
+                    "Comma-separated list of hostname:port pairs")
+
+# Training related flags
+flags.DEFINE_string("log_dir",
+                    tport().get_logs_path(root=PATH_TO_LOCAL_LOGS),
+                    "Path to store logs and checkpoints. It is recommended"
+                    "to use get_logs_path() to define your logs directory."
+                    "If you set your logs directory manually make sure"
+                    "to use /logs/ when running on TensorPort cloud.")
+flags.DEFINE_string("data_dir",
+                    tport().get_data_path(root=ROOT_PATH_TO_LOCAL_DATA,
+                                        path='mnist-dataset'),
+                    "Path to dataset. It is recommended to use get_data_path()"
+                    "to define your data directory. If you set your dataset"
+                    "directory manually makue sure to use /data/ as root path"
+                    "when running on TensorPort cloud.")
+flags.DEFINE_integer("hidden1", 128,
+                     "Number of units in the 1st hidden layer of the NN")
+flags.DEFINE_integer("hidden2", 128,
+                     "Number of units in the 2nd hidden layer of the NN")
+flags.DEFINE_integer("batch_size", 100, "Training batch size")
+flags.DEFINE_float("learning_rate", 0.01, "Learning rate")
+
+FLAGS = flags.FLAGS
+
+
+def device_and_target():
+  # If FLAGS.job_name is not set, we're running single-machine TensorFlow.
+  # Don't set a device.
+  if FLAGS.job_name is None:
+    print("Running single-machine training")
+    return (None, "")
+
+  # Otherwise we're running distributed TensorFlow.
+  print("Running distributed training")
+  if FLAGS.task_index is None or FLAGS.task_index == "":
+    raise ValueError("Must specify an explicit `task_index`")
+  if FLAGS.ps_hosts is None or FLAGS.ps_hosts == "":
+    raise ValueError("Must specify an explicit `ps_hosts`")
+  if FLAGS.worker_hosts is None or FLAGS.worker_hosts == "":
+    raise ValueError("Must specify an explicit `worker_hosts`")
+
+  cluster_spec = tf.train.ClusterSpec({
+      "ps": FLAGS.ps_hosts.split(","),
+      "worker": FLAGS.worker_hosts.split(","),
+  })
+  server = tf.train.Server(
+      cluster_spec, job_name=FLAGS.job_name, task_index=FLAGS.task_index)
+  if FLAGS.job_name == "ps":
+    server.join()
+
+  worker_device = "/job:worker/task:{}".format(FLAGS.task_index)
+  # The device setter will automatically place Variables ops on separate
+  # parameter servers (ps). The non-Variable ops will be placed on the workers.
+  return (
+      tf.train.replica_device_setter(
+          worker_device=worker_device,
+          cluster=cluster_spec),
+      server.target,
+  )
+
+
+#Extract data
+
+# data_path = "../data/labels.json"
+
+# print("data path: ",data_path)
+# # print(out_path)
+
+data_path = ROOT_PATH_TO_LOCAL_DATA
 
 if "." in data_path:
     if data_path.split(".")[-1] != "json":
@@ -173,97 +268,106 @@ def model_1(X,y,is_training, regularizer = None):
 
 	return ll1
 
-regularizer = tf.contrib.layers.l2_regularizer(scale=REG_WEIGHT)
 
-logits = model_1(X,y,is_training, regularizer)
+def main(unused_argv):
+  if FLAGS.log_dir is None or FLAGS.log_dir == "":
+    raise ValueError("Must specify an explicit `log_dir`")
+  if FLAGS.data_dir is None or FLAGS.data_dir == "":
+    raise ValueError("Must specify an explicit `data_dir`")
 
-#Get regularization term
-reg_variables = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-reg_term = tf.contrib.layers.apply_regularization(regularizer, reg_variables)
+  device, target = device_and_target()
 
-#Get loss
-total_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = logits, labels = y)
-total_loss += reg_term
+	regularizer = tf.contrib.layers.l2_regularizer(scale=REG_WEIGHT)
 
-mean_loss = tf.reduce_mean(total_loss)
+	logits = model_1(X,y,is_training, regularizer)
+
+	#Get regularization term
+	reg_variables = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+	reg_term = tf.contrib.layers.apply_regularization(regularizer, reg_variables)
+
+	#Get loss
+	total_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = logits, labels = y)
+	total_loss += reg_term
+
+	mean_loss = tf.reduce_mean(total_loss)
 
 
 
-#lr = tf.train.exponential_decay(starter_learning_rate, global_step, 5000, 0.96)
-optimizer = tf.train.AdamOptimizer(learning_rate = LEARNING_RATE)
-train_step = optimizer.minimize(mean_loss)
+	#lr = tf.train.exponential_decay(starter_learning_rate, global_step, 5000, 0.96)
+	optimizer = tf.train.AdamOptimizer(learning_rate = LEARNING_RATE)
+	train_step = optimizer.minimize(mean_loss)
 
 
 
-def run_model(session, predict, loss_val, Xd, yd,
-              epochs=1, batch_size=64, print_every=10,
-              training=None, plot_losses=False):
-    # have tensorflow compute accuracy
-    correct_prediction = tf.equal(tf.argmax(predict,1), y)
-    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    
-    # shuffle indices
-    train_indicies = np.arange(Xd.shape[0])
-    np.random.shuffle(train_indicies)
+	def run_model(session, predict, loss_val, Xd, yd,
+	              epochs=1, batch_size=64, print_every=10,
+	              training=None, plot_losses=False):
+	    # have tensorflow compute accuracy
+	    correct_prediction = tf.equal(tf.argmax(predict,1), y)
+	    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+	    
+	    # shuffle indices
+	    train_indicies = np.arange(Xd.shape[0])
+	    np.random.shuffle(train_indicies)
 
-    training_now = training is not None
-    
-    # setting up variables we want to compute (and optimizing)
-    # if we have a training function, add that to things we compute
-    variables = [mean_loss,correct_prediction,accuracy]
-    if training_now:
-        variables[-1] = training
-    
-    # counter 
-    iter_cnt = 0
-    losses = []
-    for e in range(epochs):
-        # keep track of losses and accuracy
-        correct = 0#
-        # make sure we iterate over the dataset once
-        for i in range(int(math.ceil(Xd.shape[0]/batch_size))):
-            # generate indicies for the batch
-            start_idx = (i*batch_size)%X_train.shape[0]
-            idx = train_indicies[start_idx:start_idx+batch_size]
-           
-#           print(np.shape(yd[idx]))
-            # create a feed dictionary for this batch
-            feed_dict = {X: Xd[idx],
-                         y: yd[idx],
-                         is_training: training_now }
-            # get batch size
-            actual_batch_size = yd[i:i+batch_size].shape[0]
-            
-            # have tensorflow compute loss and correct predictions
-            # and (if given) perform a training step
-            loss, corr , _ = session.run(variables,feed_dict=feed_dict)
-            # aggregate performance stats
-            losses.append(loss*actual_batch_size)
-            correct += np.sum(corr)
-            
-            if training_now and (iter_cnt % print_every) == 0:
-                print(iter_cnt,np.sum(corr)/float(actual_batch_size))
-            iter_cnt += 1
-        total_correct = correct/float(Xd.shape[0])
-#         print(float(Xd.shape[0]))
-        total_loss = np.sum(losses)/float(Xd.shape[0])
-        print(total_loss,total_correct,e+1)
-        if plot_losses:
-            plt.plot(losses)
-            plt.grid(True)
-            plt.title('Epoch {} Loss'.format(e+1))
-            plt.xlabel('minibatch number')
-            plt.ylabel('minibatch loss')
-            plt.show()
-    return losses, total_loss,total_correct
+	    training_now = training is not None
+	    
+	    # setting up variables we want to compute (and optimizing)
+	    # if we have a training function, add that to things we compute
+	    variables = [mean_loss,correct_prediction,accuracy]
+	    if training_now:
+	        variables[-1] = training
+	    
+	    # counter 
+	    iter_cnt = 0
+	    losses = []
+	    for e in range(epochs):
+	        # keep track of losses and accuracy
+	        correct = 0#
+	        # make sure we iterate over the dataset once
+	        for i in range(int(math.ceil(Xd.shape[0]/batch_size))):
+	            # generate indicies for the batch
+	            start_idx = (i*batch_size)%X_train.shape[0]
+	            idx = train_indicies[start_idx:start_idx+batch_size]
+	           
+	#           print(np.shape(yd[idx]))
+	            # create a feed dictionary for this batch
+	            feed_dict = {X: Xd[idx],
+	                         y: yd[idx],
+	                         is_training: training_now }
+	            # get batch size
+	            actual_batch_size = yd[i:i+batch_size].shape[0]
+	            
+	            # have tensorflow compute loss and correct predictions
+	            # and (if given) perform a training step
+	            loss, corr , _ = session.run(variables,feed_dict=feed_dict)
+	            # aggregate performance stats
+	            losses.append(loss*actual_batch_size)
+	            correct += np.sum(corr)
+	            
+	            if training_now and (iter_cnt % print_every) == 0:
+	                print(iter_cnt,np.sum(corr)/float(actual_batch_size))
+	            iter_cnt += 1
+	        total_correct = correct/float(Xd.shape[0])
+	#         print(float(Xd.shape[0]))
+	        total_loss = np.sum(losses)/float(Xd.shape[0])
+	        print(total_loss,total_correct,e+1)
+	        if plot_losses:
+	            plt.plot(losses)
+	            plt.grid(True)
+	            plt.title('Epoch {} Loss'.format(e+1))
+	            plt.xlabel('minibatch number')
+	            plt.ylabel('minibatch loss')
+	            plt.show()
+	    return losses, total_loss,total_correct
 
-with tf.Session() as sess:
-    with tf.device("/cpu:0"): #"/cpu:0" or "/gpu:0" 
-        sess.run(tf.global_variables_initializer())
-        print('Training')
-        losses, loss, total_correct = run_model(sess,logits,mean_loss,X_train,Y_train,10,10,100,train_step,True)
-        print('Validation')
-        run_model(sess,logits,mean_loss,X_test,Y_test,1,64)
+	with tf.Session() as sess:
+	    with tf.device("/cpu:0"): #"/cpu:0" or "/gpu:0" 
+	        sess.run(tf.global_variables_initializer())
+	        print('Training')
+	        losses, loss, total_correct = run_model(sess,logits,mean_loss,X_train,Y_train,10,10,100,train_step,True)
+	        print('Validation')
+	        run_model(sess,logits,mean_loss,X_test,Y_test,1,64)
 
 
 
