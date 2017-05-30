@@ -17,20 +17,20 @@ print("data path: ",data_path)
 
 
 if "." in data_path:
-    if data_path.split(".")[-1] != "json":
-        raise ValueError("Invalid Extension")
+	if data_path.split(".")[-1] != "json":
+		raise ValueError("Invalid Extension")
 else:
-    data_path + ".json"
+	data_path + ".json"
 
 data = []
 
 for line in open(data_path, 'r'):
-    data.append(json.loads(line))	
+	data.append(json.loads(line))	
 
 #Extractng labels only
 number_blobs = []
 for dic in data:
-    number_blobs.append(dic['nb_blobs'])
+	number_blobs.append(dic['nb_blobs'])
 print(np.shape(number_blobs))
 Y = np.asarray(number_blobs)
 # print(type(Y))
@@ -121,27 +121,27 @@ def conv_relu_batchnorm(input, is_training, filter_tuple, conv_depth, layer_name
 			name = 'conv')
 
 		relu = tf.nn.relu(
-	    	conv,
-	    	name="relu"
+			conv,
+			name="relu"
 		)
 
 		batchnorm = tf.layers.batch_normalization(
-		    relu,
-		    axis=-1,
-		    momentum=0.99,
-		    epsilon=0.001,
-		    center=True,
-		    scale=True,
-		    beta_initializer=tf.zeros_initializer(),
-		    gamma_initializer=tf.ones_initializer(),
-		    moving_mean_initializer=tf.zeros_initializer(),
-		    moving_variance_initializer=tf.ones_initializer(),
-		    beta_regularizer=None,
-		    gamma_regularizer=None,
-		    training=is_training,
-		    trainable=True,
-		    name='batchnorm',
-		    reuse=None
+			relu,
+			axis=-1,
+			momentum=0.99,
+			epsilon=0.001,
+			center=True,
+			scale=True,
+			beta_initializer=tf.zeros_initializer(),
+			gamma_initializer=tf.ones_initializer(),
+			moving_mean_initializer=tf.zeros_initializer(),
+			moving_variance_initializer=tf.ones_initializer(),
+			beta_regularizer=None,
+			gamma_regularizer=None,
+			training=is_training,
+			trainable=True,
+			name='batchnorm',
+			reuse=None
 		    )
 
 	return batchnorm
@@ -161,15 +161,16 @@ def model_1(X,y,is_training, regularizer = None):
 
 	#Maxpool
 	mp3 = tf.nn.max_pool(layer3_out, ksize = (1, 2, 2, 1), strides = (1, 2, 2, 1), padding = 'VALID')
-	mp3 = tf.reshape(mp3, (-1, mp3.shape[1]*mp3.shape[2]*mp3.shape[3]))
+	print(mp3.shape)
+	reshaped = tf.reshape(mp3, (-1, 173*173*32))
 	#activation_fn=None forces a linear activation. Rempove that optionnal arg to make it a relu
-	ll1 = tf.contrib.layers.fully_connected(mp3,
+	ll1 = tf.contrib.layers.fully_connected(reshaped,
 		num_outputs = 5,
-    	activation_fn = None,
-    	weights_initializer = tf.contrib.layers.xavier_initializer(),
-    	weights_regularizer = regularizer,
-    	biases_initializer = tf.zeros_initializer()
-    	)
+		activation_fn = None,
+		weights_initializer = tf.contrib.layers.xavier_initializer(),
+		weights_regularizer = regularizer,
+		biases_initializer = tf.zeros_initializer()
+		)
 
 	return ll1
 
@@ -196,74 +197,74 @@ train_step = optimizer.minimize(mean_loss)
 
 
 def run_model(session, predict, loss_val, Xd, yd,
-              epochs=1, batch_size=64, print_every=10,
-              training=None, plot_losses=False):
-    # have tensorflow compute accuracy
-    correct_prediction = tf.equal(tf.argmax(predict,1), y)
-    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    
-    # shuffle indices
-    train_indicies = np.arange(Xd.shape[0])
-    np.random.shuffle(train_indicies)
+				epochs=1, batch_size=64, print_every=10,
+				training=None, plot_losses=False):
+	# have tensorflow compute accuracy
+	correct_prediction = tf.equal(tf.argmax(predict,1), y)
+	accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-    training_now = training is not None
-    
-    # setting up variables we want to compute (and optimizing)
-    # if we have a training function, add that to things we compute
-    variables = [mean_loss,correct_prediction,accuracy]
-    if training_now:
-        variables[-1] = training
-    
-    # counter 
-    iter_cnt = 0
-    losses = []
-    for e in range(epochs):
-        # keep track of losses and accuracy
-        correct = 0#
-        # make sure we iterate over the dataset once
-        for i in range(int(math.ceil(Xd.shape[0]/batch_size))):
-            # generate indicies for the batch
-            start_idx = (i*batch_size)%X_train.shape[0]
-            idx = train_indicies[start_idx:start_idx+batch_size]
-           
-#           print(np.shape(yd[idx]))
-            # create a feed dictionary for this batch
-            feed_dict = {X: Xd[idx],
-                         y: yd[idx],
-                         is_training: training_now }
-            # get batch size
-            actual_batch_size = yd[i:i+batch_size].shape[0]
-            
-            # have tensorflow compute loss and correct predictions
-            # and (if given) perform a training step
-            loss, corr , _ = session.run(variables,feed_dict=feed_dict)
-            # aggregate performance stats
-            losses.append(loss*actual_batch_size)
-            correct += np.sum(corr)
-            
-            if training_now and (iter_cnt % print_every) == 0:
-                print(iter_cnt,np.sum(corr)/float(actual_batch_size))
-            iter_cnt += 1
-        total_correct = correct/float(Xd.shape[0])
-#         print(float(Xd.shape[0]))
-        total_loss = np.sum(losses)/float(Xd.shape[0])
-        print(total_loss,total_correct,e+1)
-        if plot_losses:
-            plt.plot(losses)
-            plt.grid(True)
-            plt.title('Epoch {} Loss'.format(e+1))
-            plt.xlabel('minibatch number')
-            plt.ylabel('minibatch loss')
-            plt.show()
-    return losses, total_loss,total_correct
+	# shuffle indices
+	train_indicies = np.arange(Xd.shape[0])
+	np.random.shuffle(train_indicies)
+
+	training_now = training is not None
+
+	# setting up variables we want to compute (and optimizing)
+	# if we have a training function, add that to things we compute
+	variables = [mean_loss,correct_prediction,accuracy]
+	if training_now:
+	    variables[-1] = training
+
+	# counter 
+	iter_cnt = 0
+	losses = []
+	for e in range(epochs):
+	# keep track of losses and accuracy
+		correct = 0#
+		# make sure we iterate over the dataset once
+	for i in range(int(math.ceil(Xd.shape[0]/batch_size))):
+	# generate indicies for the batch
+		start_idx = (i*batch_size)%X_train.shape[0]
+		idx = train_indicies[start_idx:start_idx+batch_size]
+
+		# create a feed dictionary for this batch
+		feed_dict = {X: Xd[idx],
+		y: yd[idx],
+		is_training: training_now }
+		# get batch size
+		actual_batch_size = yd[i:i+batch_size].shape[0]
+
+		# have tensorflow compute loss and correct predictions
+		# and (if given) perform a training step
+		loss, corr , _ = session.run(variables,feed_dict=feed_dict)
+		# aggregate performance stats
+		losses.append(loss*actual_batch_size)
+		correct += np.sum(corr)
+
+		if training_now and (iter_cnt % print_every) == 0:
+			print(iter_cnt,np.sum(corr)/float(actual_batch_size))
+		iter_cnt += 1
+		total_correct = correct/float(Xd.shape[0])
+
+	total_loss = np.sum(losses)/float(Xd.shape[0])
+	print(total_loss,total_correct,e+1)
+
+	if plot_losses:
+		plt.plot(losses)
+		plt.grid(True)
+		plt.title('Epoch {} Loss'.format(e+1))
+		plt.xlabel('minibatch number')
+		plt.ylabel('minibatch loss')
+		plt.show()
+	return losses, total_loss,total_correct
 
 with tf.Session() as sess:
-    with tf.device("/cpu:0"): #"/cpu:0" or "/gpu:0" 
-        sess.run(tf.global_variables_initializer())
-        print('Training')
-        losses, loss, total_correct = run_model(sess,logits,mean_loss,X_train,Y_train,10,10,100,train_step,True)
-        print('Validation')
-        run_model(sess,logits,mean_loss,X_test,Y_test,1,64)
+	with tf.device("/cpu:0"): #"/cpu:0" or "/gpu:0" 
+		sess.run(tf.global_variables_initializer())
+		print('Training')
+		losses, loss, total_correct = run_model(sess,logits,mean_loss,X_train,Y_train,10,10,100,train_step,True)
+		print('Validation')
+		run_model(sess,logits,mean_loss,X_test,Y_test,1,64)
 
 
 
