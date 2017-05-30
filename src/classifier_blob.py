@@ -146,10 +146,8 @@ def conv_relu_batchnorm(input, is_training, filter_tuple, conv_depth, layer_name
 
 	return batchnorm
 
-
-
 def model_1(X,y,is_training, regularizer = None):
-#  [conv-relu-conv-relu-pool]xN -> [affine]xM -> [softmax or SVM]   
+	#  [conv-relu-conv-relu-pool]xN -> [affine]xM -> [softmax or SVM]   
 
 	in_dim = X.shape[0]
 	print(in_dim)
@@ -161,7 +159,7 @@ def model_1(X,y,is_training, regularizer = None):
 
 	#Maxpool
 	mp3 = tf.nn.max_pool(layer3_out, ksize = (1, 2, 2, 1), strides = (1, 2, 2, 1), padding = 'VALID')
-	print(mp3.shape)
+
 	reshaped = tf.reshape(mp3, (-1, 173*173*32))
 	#activation_fn=None forces a linear activation. Rempove that optionnal arg to make it a relu
 	ll1 = tf.contrib.layers.fully_connected(reshaped,
@@ -174,31 +172,24 @@ def model_1(X,y,is_training, regularizer = None):
 
 	return ll1
 
-regularizer = tf.contrib.layers.l2_regularizer(scale=REG_WEIGHT)
+def loss(X,y,is_training):
+	regularizer = tf.contrib.layers.l2_regularizer(scale=REG_WEIGHT)
+	logits = model_1(X,y,is_training, regularizer)
 
-logits = model_1(X,y,is_training, regularizer)
+	#Get regularization term
+	reg_variables = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+	reg_term = tf.contrib.layers.apply_regularization(regularizer, reg_variables)
 
-#Get regularization term
-reg_variables = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-reg_term = tf.contrib.layers.apply_regularization(regularizer, reg_variables)
+	#Get loss
+	total_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = logits, labels = y)
+	total_loss += reg_term
 
-#Get loss
-total_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = logits, labels = y)
-total_loss += reg_term
-
-mean_loss = tf.reduce_mean(total_loss)
-
-
+	mean_loss = tf.reduce_mean(total_loss)
+	return logits, mean_loss
 
 #lr = tf.train.exponential_decay(starter_learning_rate, global_step, 5000, 0.96)
-optimizer = tf.train.AdamOptimizer(learning_rate = LEARNING_RATE)
-train_step = optimizer.minimize(mean_loss)
 
-
-
-def run_model(session, predict, loss_val, Xd, yd,
-				epochs=1, batch_size=64, print_every=10,
-				training=None, plot_losses=False):
+def run_model(session, predict, loss_val, Xd, yd, epochs=1, batch_size=64, print_every=10,training=None, plot_losses=False):
 	# have tensorflow compute accuracy
 	correct_prediction = tf.equal(tf.argmax(predict,1), y)
 	accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
@@ -217,56 +208,59 @@ def run_model(session, predict, loss_val, Xd, yd,
 
 	# counter 
 	iter_cnt = 0
-	losses = []
+	losses_graph = []
 	for e in range(epochs):
 	# keep track of losses and accuracy
 		correct = 0#
 		# make sure we iterate over the dataset once
-	for i in range(int(math.ceil(Xd.shape[0]/batch_size))):
-	# generate indicies for the batch
-		start_idx = (i*batch_size)%X_train.shape[0]
-		idx = train_indicies[start_idx:start_idx+batch_size]
+		losses = []
+		for i in range(int(math.ceil(Xd.shape[0]/batch_size))):
+		# generate indicies for the batch
+			start_idx = (i*batch_size)%X_train.shape[0]
+			idx = train_indicies[start_idx:start_idx+batch_size]
 
-		# create a feed dictionary for this batch
-		feed_dict = {X: Xd[idx],
-		y: yd[idx],
-		is_training: training_now }
-		# get batch size
-		actual_batch_size = yd[i:i+batch_size].shape[0]
+			# create a feed dictionary for this batch
+			feed_dict = {X: Xd[idx],
+			y: yd[idx],
+			is_training: training_now }
+			# get batch size
+			actual_batch_size = yd[i:i+batch_size].shape[0]
 
-		# have tensorflow compute loss and correct predictions
-		# and (if given) perform a training step
-		loss, corr , _ = session.run(variables,feed_dict=feed_dict)
-		# aggregate performance stats
-		losses.append(loss*actual_batch_size)
-		correct += np.sum(corr)
+			# have tensorflow compute loss and correct predictions
+			# and (if given) perform a training step
+			loss, corr , _ = session.run(variables,feed_dict=feed_dict)
+			# aggregate performance stats
+			losses.append(loss*actual_batch_size)
+			losses_graph.append(loss*actual_batch_size)
+			correct += np.sum(corr)
 
-		if training_now and (iter_cnt % print_every) == 0:
-			print(iter_cnt,np.sum(corr)/float(actual_batch_size))
-		iter_cnt += 1
-		total_correct = correct/float(Xd.shape[0])
+			if training_now and (iter_cnt % print_every) == 0:
+				print(iter_cnt,np.sum(corr)/float(actual_batch_size))
+			iter_cnt += 1
+			total_correct = correct/float(Xd.shape[0])
 
-	total_loss = np.sum(losses)/float(Xd.shape[0])
-	print(total_loss,total_correct,e+1)
+		total_loss = np.sum(losses)/float(Xd.shape[0])
+		print(total_loss,total_correct,e+1)
 
-	if plot_losses:
-		plt.plot(losses)
-		plt.grid(True)
-		plt.title('Epoch {} Loss'.format(e+1))
-		plt.xlabel('minibatch number')
-		plt.ylabel('minibatch loss')
-		plt.show()
+		if plot_losses:
+			plt.plot(losses_graph = [])
+			plt.grid(True)
+			plt.title('Epoch {} Loss'.format(e+1))
+			plt.xlabel('minibatch number')
+			plt.ylabel('minibatch loss')
+			plt.show()
 	return losses, total_loss,total_correct
+
 
 with tf.Session() as sess:
 	with tf.device("/cpu:0"): #"/cpu:0" or "/gpu:0" 
-		sess.run(tf.global_variables_initializer())
-		print('Training')
-		losses, loss, total_correct = run_model(sess,logits,mean_loss,X_train,Y_train,10,10,100,train_step,True)
-		print('Validation')
-		run_model(sess,logits,mean_loss,X_test,Y_test,1,64)
-
-
-
-
+		for lr in [1e-7]:
+			logits, mean_loss = loss(X,y,is_training)
+			optimizer = tf.train.AdamOptimizer(learning_rate = lr)
+			train_step = optimizer.minimize(mean_loss)
+			sess.run(tf.global_variables_initializer())
+			print('Training')
+			losses, loss, total_correct = run_model(sess,logits,mean_loss,X_train,Y_train,10,10,100,train_step,True)
+			print('Validation')
+			run_model(sess,logits,mean_loss,X_test,Y_test,1,64)
 
